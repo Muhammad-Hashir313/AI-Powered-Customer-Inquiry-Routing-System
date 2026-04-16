@@ -36,3 +36,5 @@ crash.log
 # OS files
 .DS_Store
 Thumbs.db
+
+terraform/code-files/index.html
