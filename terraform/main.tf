@@ -71,7 +71,7 @@ resource "aws_s3_bucket" "my_bucket" {
 resource "aws_s3_object" "my-object" {
   bucket = aws_s3_bucket.my_bucket.id
   key    = "index.html"
-  source = "./index.html"
+  source = "./code-file/index.html"
   content_type = "text/html"
 }
 

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Inquiry Form</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .card {
+      background: white;
+      padding: 25px;
+      width: 400px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+
+    h2 {
+      margin-bottom: 20px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    textarea {
+      resize: none;
+      height: 100px;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: 0.2s;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+    }
+
+    button:disabled {
+      background: #93c5fd;
+      cursor: not-allowed;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid white;
+      border-top: 2px solid transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .success {
+      color: green;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .error {
+      color: red;
+      margin-top: 10px;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="card">
+  <h2>Customer Inquiry</h2>
+
+  <form id="form">
+
+    <input
+      type="text"
+      id="name"
+      placeholder="Name"
+      required
+      minlength="3"
+      maxlength="50"
+      pattern="[A-Za-z ]+"
+    />
+
+    <input
+      type="email"
+      id="email"
+      placeholder="Email"
+      required
+      maxlength="80"
+    />
+
+    <textarea
+      id="inquiry"
+      placeholder="Your inquiry"
+      required
+      minlength="10"
+      maxlength="300"
+    ></textarea>
+
+    <button id="submitBtn" type="submit">
+      <div class="spinner" id="spinner"></div>
+      <span id="btnText">Submit</span>
+    </button>
+
+    <div class="success" id="success">Inquiry submitted successfully!</div>
+    <div class="error" id="error">Something went wrong. Try again.</div>
+
+  </form>
+</div>
+
+<script>
+  const form = document.getElementById("form");
+  const btn = document.getElementById("submitBtn");
+  const spinner = document.getElementById("spinner");
+  const btnText = document.getElementById("btnText");
+
+  const success = document.getElementById("success");
+  const error = document.getElementById("error");
+
+  const inputs = form.querySelectorAll("input, textarea");
+
+  function setLoading(state) {
+    inputs.forEach(i => i.disabled = state);
+    btn.disabled = state;
+
+    if (state) {
+      spinner.style.display = "block";
+      btnText.textContent = "Submitting";
+    } else {
+      spinner.style.display = "none";
+      btnText.textContent = "Submit";
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    success.style.display = "none";
+    error.style.display = "none";
+
+    setLoading(true);
+
+    const data = {
+      name: document.getElementById("name").value,
+      email: document.getElementById("email").value,
+      inquiry: document.getElementById("inquiry").value
+    };
+
+    try {
+      const res = await fetch("https://your-api-endpoint.com/inquiry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+
+      if (!res.ok) throw new Error();
+
+      success.style.display = "block";
+      form.reset();
+
+    } catch (err) {
+      error.style.display = "block";
+    } finally {
+      setLoading(false);
+    }
+  });
+</script>
+
+</body>
+</html>
