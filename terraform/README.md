@@ -11,6 +11,7 @@
 ### 1. Initialize Terraform
 
 ```bash
+cd terraform/
 terraform init
 ```
 
@@ -68,15 +69,10 @@ Terraform state files track your deployed infrastructure:
 
 The `code-files/` directory contains application scripts that need to be executed:
 
-### Make Scripts Executable
+### Make Scripts Executable and Execute
 
 ```bash
 chmod +x code-files/update-api-in-html.sh
-```
-
-### Run the Update Script
-
-```bash
 ./code-files/update-api-in-html.sh
 ```
 
