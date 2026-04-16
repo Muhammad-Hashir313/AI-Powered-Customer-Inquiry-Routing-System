@@ -64,6 +64,15 @@ resource "aws_route_table_association" "private-rt-association" {
 # S3 Bucket
 resource "aws_s3_bucket" "my_bucket" {
   bucket = "ai-powered-customer-inquiry-system-bucket"
+
+  force_destroy = true
+}
+
+resource "aws_s3_object" "my-object" {
+  bucket = aws_s3_bucket.my_bucket.id
+  key    = "index.html"
+  source = "./index.html"
+  content_type = "text/html"
 }
 
 # OAC for CloudFront
