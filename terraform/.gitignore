@@ -33,8 +33,16 @@ crash.log
 *.key
 *.pub
 
+# Node dependencies
+node_modules/
+
+# Build artifacts
+*.zip
+lambda.zip
+
 # OS files
 .DS_Store
 Thumbs.db
 
-terraform/code-files/index.html
+# Generated files
+code-files/index.html

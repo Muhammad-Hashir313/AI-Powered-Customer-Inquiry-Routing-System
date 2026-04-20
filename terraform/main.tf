@@ -14,6 +14,14 @@ resource "aws_subnet" "public_subnet" {
 resource "aws_subnet" "private_subnet" {
   vpc_id     = aws_vpc.my_vpc.id
   cidr_block = "10.0.2.0/24"
+  availability_zone = "us-east-1a"
+}
+
+# For RDS
+resource "aws_subnet" "private_subnet_2" {
+  vpc_id     = aws_vpc.my_vpc.id
+  cidr_block = "10.0.3.0/24"
+  availability_zone = "us-east-1b"
 }
 
 # Internet Gateway
@@ -47,7 +55,7 @@ resource "aws_route_table" "private-rt" {
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_nat_gateway.my-ng.id
+    nat_gateway_id = aws_nat_gateway.my-ng.id
   }
 }
 
@@ -59,6 +67,96 @@ resource "aws_route_table_association" "public-rt-association" {
 resource "aws_route_table_association" "private-rt-association" {
   subnet_id      = aws_subnet.private_subnet.id
   route_table_id = aws_route_table.private-rt.id
+}
+
+# RDS - MySQL
+resource "aws_db_subnet_group" "my-rds" {
+  name       = "main"
+  subnet_ids = [aws_subnet.private_subnet.id, aws_subnet.private_subnet_2.id]
+
+  tags = {
+    Name = "My DB subnet group"
+  }
+}
+
+resource "aws_security_group" "db_sg" {
+  name   = "db-sg"
+  vpc_id = aws_vpc.my_vpc.id
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    security_groups = [aws_security_group.ec2-sg.id, aws_security_group.lambda_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_db_instance" "my-db" {
+  allocated_storage    = 10
+  db_name              = "mydb"
+  engine               = "mysql"
+  engine_version       = "8.0"
+  instance_class       = "db.t3.micro"
+  username             = var.aws_db_user.name
+  password             = var.aws_db_user.password
+  parameter_group_name = "default.mysql8.0"
+  skip_final_snapshot  = true
+  db_subnet_group_name = aws_db_subnet_group.my-rds.name
+  vpc_security_group_ids = [aws_security_group.db_sg.id, aws_security_group.lambda_sg.id]
+}
+
+# Debug Instance
+resource "aws_key_pair" "tf_key" {
+  key_name   = "tf-key"
+  public_key = file(var.aws_key_pair_destination)
+}
+
+
+resource "aws_security_group" "ec2-sg" {
+  name   = "ec2-sg"
+  vpc_id = aws_vpc.my_vpc.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    "Name" = "EC2 Security Group"
+  }
+}
+
+resource "aws_instance" "debug_instance" {
+  ami           = "ami-0ec10929233384c7f"
+  instance_type = "t3.micro"
+  subnet_id     = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [ aws_security_group.ec2-sg.id ]
+  key_name      = "tf-key"
+  associate_public_ip_address = true
+  user_data = templatefile("${path.module}/code-files/mysql-server-setup.sh", {
+    db_host     = aws_db_instance.my-db.address
+    db_password = var.aws_db_user.password
+  })
+
+  tags = {
+    Name = "Debug Instance"
+  }
 }
 
 # S3 Bucket
@@ -146,6 +244,19 @@ resource "aws_s3_bucket_policy" "allow_cloudfront" {
 }
 
 # Lambda Function
+resource "aws_security_group" "lambda_sg" {
+  name   = "lambda-sg"
+  description = "Security group for Lambda function to access RDS"
+  vpc_id = aws_vpc.my_vpc.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 resource "aws_iam_role" "lambda_role" {
   name = "lambda-role"
 
@@ -161,19 +272,47 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+data "archive_file" "lambda_code" {
+  type        = "zip"
+  source_dir  = "${path.module}/code-files/lambda-function"
+  output_path = "${path.module}/code-files/lambda.zip"
+}
+
 resource "aws_lambda_function" "ingestion_lambda" {
   function_name = "inquiry-handler"
   role          = aws_iam_role.lambda_role.arn
   handler       = "index.handler"
   runtime       = "nodejs18.x"
 
-  filename         = "./code-files/lambda.zip"
-  source_code_hash = filebase64sha256("./code-files/lambda.zip")
+  filename         = data.archive_file.lambda_code.output_path
+  source_code_hash = data.archive_file.lambda_code.output_base64sha256
+
+  environment {
+    variables = {
+      DB_HOST = aws_db_instance.my-db.address
+      DB_NAME = "mydb"
+      DB_USER = var.aws_db_user.name
+      DB_PASS = var.aws_db_user.password 
+    }
+  }
+
+  # Lambda needs to be in the VPC to talk to RDS
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_subnet.id, aws_subnet.private_subnet_2.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+
+  timeout = 30
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 # API Gateway

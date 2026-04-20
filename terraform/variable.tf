@@ -9,3 +9,17 @@ variable "aws_key_pair_destination" {
   type        = string
   default     = "/home/hashir/.ssh/tf-key.pub"
 }
+
+variable "aws_db_user" {
+  description = "Username and Password of database"
+
+  type = object({
+    name     = string
+    password = string
+  })
+
+  default = {
+    name     = "hashir"
+    password = "hashir313"
+  }
+}
