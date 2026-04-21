@@ -419,7 +419,7 @@ resource "aws_lambda_function" "processing_lambda" {
   environment {
     variables = {
       SNS_TOPIC_ARN = aws_sns_topic.department_alerts.arn
-      SENDER_EMAIL  = "mehashir313@gmail.com"
+      SENDER_EMAIL  = "email@example.com"
     }
   }
 
@@ -450,13 +450,13 @@ resource "aws_sns_topic" "department_alerts" {
 resource "aws_sns_topic_subscription" "admin_email_sub" {
   topic_arn = aws_sns_topic.department_alerts.arn
   protocol  = "email"
-  endpoint  = "mehashir313@gmail.com" 
+  endpoint  = "email@example.com" 
 }
 
 # SES Email Identity (The email you'll send FROM)
 # Note: You must click the verification link AWS sends to this email!
 resource "aws_ses_email_identity" "sender_email" {
-  email = "mehashir313@gmail.com"
+  email = "email@example.com"
 }
 
 resource "aws_iam_role_policy" "processor_permissions" {

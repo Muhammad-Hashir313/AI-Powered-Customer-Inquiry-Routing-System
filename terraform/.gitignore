@@ -32,6 +32,7 @@ crash.log
 *.pem
 *.key
 *.pub
+tf-*
 
 # Node dependencies
 node_modules/

@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "aws_key_pair_destination" {
   description = "Path to the public key"
   type        = string
-  default     = "/home/hashir/.ssh/tf-key.pub"
+  default     = "./tf-key.pub"
 }
 
 variable "aws_db_user" {
@@ -19,7 +19,7 @@ variable "aws_db_user" {
   })
 
   default = {
-    name     = "hashir"
-    password = "hashir313"
+    name     = "user"
+    password = "pass"
   }
 }

@@ -1,12 +1,51 @@
-# AI Project Terraform Setup
+# AI-Powered Customer Inquiry System
 
-## Prerequisites
+## What Is This Project?
 
-- Terraform installed (version 1.0 or higher)
-- AWS credentials configured
-- Git (for cloning the repository)
+This is a serverless AI-powered customer inquiry management system built on AWS. It collects customer inquiries through a web form, processes them with AI, and automatically notifies both internal departments and customers via email. The entire infrastructure is managed through Terraform, making it reproducible and version-controlled.
+
+## Problem It Solves
+
+- **Manual inquiry handling**: Automates customer inquiry collection and response
+- **Slow response times**: AI processes inquiries asynchronously without blocking users
+- **Department coordination**: SNS automatically alerts departments about new inquiries
+- **Email notifications**: Customers receive AI-generated responses automatically via SES
+- **Infrastructure complexity**: Terraform ensures consistent, repeatable infrastructure deployments
+
+## How The Flow Works
+
+1. **Customer Submits Inquiry**: User fills out a form on the website and submits their question
+2. **Ingestion Lambda**: Receives the request via API Gateway, stores customer data and inquiry in MySQL database
+3. **SQS Queuing**: Inquiry is added to an SQS queue for asynchronous processing (immediate response to user)
+4. **Processing Lambda**: Triggered by SQS message, invokes Claude AI via AWS Bedrock to generate a response
+5. **Department Alert**: System publishes notification to SNS topic (departments receive email alert)
+6. **Customer Response**: AI-generated response is sent to customer via SES email
+7. **Database Update**: Inquiry record is updated with the AI response in MySQL
+
+## Services Used
+
+| Service | Purpose |
+|---------|---------|
+| **Lambda** | Serverless compute for inquiry handling and AI processing |
+| **API Gateway** | HTTP endpoint for receiving customer inquiries |
+| **RDS (MySQL)** | Stores customers and inquiries |
+| **SQS** | Message queue for decoupling ingestion from processing |
+| **SNS** | Internal notifications to departments |
+| **SES** | Email service for customer responses |
+| **Bedrock** | Claude AI model invocation |
+| **S3** | Hosts inquiry form HTML |
+| **CloudFront** | CDN for form distribution |
+| **EC2** | Debug instance for database initialization |
+| **VPC** | Network isolation with subnets |
 
 ## Setup Instructions
+
+### Prerequisites
+
+- Terraform installed (version 1.0 or higher)
+- AWS credentials configured with `terraform` profile
+- SSH key pair at `~/.ssh/tf-key.pub`
+- SES email identity verified in AWS
 
 ### 1. Initialize Terraform
 
@@ -15,75 +54,67 @@ cd terraform/
 terraform init
 ```
 
-This command initializes the Terraform working directory and downloads the necessary provider plugins.
+### 2. Review and Customize (Optional)
 
-### 2. Review Configuration
+```bash
+cat variable.tf  # Check or modify defaults like region and database credentials
+```
 
-Review the configuration files to ensure they match your requirements:
-
-- `provider.tf` - Cloud provider configuration
-- `variable.tf` - Input variables
-- `main.tf` - Main infrastructure configuration
-- `output.tf` - Output values
-
-### 3. Plan Deployment
+### 3. Plan and Review
 
 ```bash
 terraform plan
 ```
 
-This command shows what resources will be created or modified.
-
-### 4. Apply Configuration
+### 4. Deploy Infrastructure
 
 ```bash
 terraform apply
 ```
 
-This command creates the infrastructure as defined in your Terraform files. You'll be prompted to confirm before resources are created.
+Type `yes` when prompted. This creates all AWS resources (5-10 minutes).
 
-## Project Structure
+### 5. Get Deployment Outputs
 
-```
-├── main.tf                 # Main infrastructure configuration
-├── provider.tf             # Provider configuration
-├── variable.tf             # Input variables
-├── output.tf               # Output values
-├── terraform.tfstate       # Current state file
-├── terraform.tfstate.backup # Backup state file
-└── code-files/             # Application code
-    ├── index.html
-    ├── index.js
-    ├── index.template.html
-    └── update-api-in-html.sh
+```bash
+terraform output
 ```
 
-## State Management
+Save the outputs, especially:
+- `api_url` - Use this for the next step
+- `cloudfront_domain_name` - Your form URL
 
-Terraform state files track your deployed infrastructure:
-
-- `terraform.tfstate` - Current state
-- `terraform.tfstate.backup` - Automatic backup
-
-## Running Scripts
-
-The `code-files/` directory contains application scripts that need to be executed:
-
-### Make Scripts Executable and Execute
+### 6. Update HTML with API Endpoint
 
 ```bash
 chmod +x code-files/update-api-in-html.sh
 ./code-files/update-api-in-html.sh
 ```
 
-This script updates the API references in the HTML files.
+This script updates the HTML form to use your API endpoint.
+
+## Project Structure
+
+```
+terraform/
+├── main.tf                  # Infrastructure resources
+├── provider.tf              # AWS provider config
+├── variable.tf              # Input variables
+├── output.tf                # Output values
+├── terraform.tfstate        # Current state
+└── code-files/
+    ├── index.html           # Customer inquiry form
+    ├── index.template.html  # HTML template
+    ├── mysql-server-setup.sh
+    ├── update-api-in-html.sh
+    ├── ingestion-lambda/    # Inquiry handler
+    └── processing-lambda/   # AI processor
+```
 
 ## Cleanup
 
-To destroy all created resources:
+To destroy all resources:
 
 ```bash
 terraform destroy
 ```
-
-You'll be prompted to confirm before any resources are destroyed.
