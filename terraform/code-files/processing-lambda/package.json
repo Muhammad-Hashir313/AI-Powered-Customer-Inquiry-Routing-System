@@ -8,5 +8,10 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1033.0",
+    "@aws-sdk/client-ses": "^3.1033.0",
+    "@aws-sdk/client-sns": "^3.1033.0"
+  }
 }

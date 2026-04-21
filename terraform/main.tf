@@ -416,6 +416,13 @@ resource "aws_lambda_function" "processing_lambda" {
   handler       = "index.handler"
   runtime       = "nodejs18.x"
 
+  environment {
+    variables = {
+      SNS_TOPIC_ARN = aws_sns_topic.department_alerts.arn
+      SENDER_EMAIL  = "mehashir313@gmail.com"
+    }
+  }
+
   filename         = data.archive_file.processing_lambda_zip.output_path
   source_code_hash = data.archive_file.processing_lambda_zip.output_base64sha256
 
@@ -432,4 +439,51 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
 resource "aws_iam_role_policy_attachment" "lambda_sqs_execution" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+}
+
+# SNS Topic for Internal Alerts
+resource "aws_sns_topic" "department_alerts" {
+  name = "department-inquiry-alerts"
+}
+
+# Add a subscription (Replace with your actual email to test)
+resource "aws_sns_topic_subscription" "admin_email_sub" {
+  topic_arn = aws_sns_topic.department_alerts.arn
+  protocol  = "email"
+  endpoint  = "mehashir313@gmail.com" 
+}
+
+# SES Email Identity (The email you'll send FROM)
+# Note: You must click the verification link AWS sends to this email!
+resource "aws_ses_email_identity" "sender_email" {
+  email = "mehashir313@gmail.com"
+}
+
+resource "aws_iam_role_policy" "processor_permissions" {
+  name = "processor-permissions"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Permission for Claude/Bedrock
+        Action   = "bedrock:InvokeModel"
+        Effect   = "Allow"
+        Resource = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+      },
+      {
+        # Permission for SNS
+        Action   = "sns:Publish"
+        Effect   = "Allow"
+        Resource = aws_sns_topic.department_alerts.arn
+      },
+      {
+        # Permission for SES
+        Action   = "ses:SendEmail"
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
 }
