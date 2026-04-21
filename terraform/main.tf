@@ -37,7 +37,7 @@ resource "aws_eip" "nat-eip" {
 # NAT Gateway
 resource "aws_nat_gateway" "my-ng" {
   allocation_id = aws_eip.nat-eip.id
-  subnet_id     = aws_subnet.private_subnet.id
+  subnet_id     = aws_subnet.public_subnet.id
 }
 
 # Route Tables
@@ -66,6 +66,11 @@ resource "aws_route_table_association" "public-rt-association" {
 
 resource "aws_route_table_association" "private-rt-association" {
   subnet_id      = aws_subnet.private_subnet.id
+  route_table_id = aws_route_table.private-rt.id
+}
+
+resource "aws_route_table_association" "private-rt-association-2" {
+  subnet_id      = aws_subnet.private_subnet_2.id
   route_table_id = aws_route_table.private-rt.id
 }
 
@@ -274,7 +279,7 @@ resource "aws_iam_role" "lambda_role" {
 
 data "archive_file" "lambda_code" {
   type        = "zip"
-  source_dir  = "${path.module}/code-files/lambda-function"
+  source_dir  = "${path.module}/code-files/ingestion-lambda"
   output_path = "${path.module}/code-files/lambda.zip"
 }
 
@@ -292,7 +297,8 @@ resource "aws_lambda_function" "ingestion_lambda" {
       DB_HOST = aws_db_instance.my-db.address
       DB_NAME = "mydb"
       DB_USER = var.aws_db_user.name
-      DB_PASS = var.aws_db_user.password 
+      DB_PASS = var.aws_db_user.password
+      SQS_QUEUE_URL = aws_sqs_queue.ingestion_queue.url
     }
   }
 
@@ -354,4 +360,76 @@ resource "aws_lambda_permission" "api-gw" {
   principal     = "apigateway.amazonaws.com"
 
   source_arn = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# SQS Queue
+resource "aws_sqs_queue" "ingestion_queue" {
+  name                      = "ingestion-queue"
+  delay_seconds             = 0
+  message_retention_seconds = 86400
+  receive_wait_time_seconds = 10
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.terraform_queue_deadletter.arn
+    maxReceiveCount     = 3
+  })
+
+  tags = {
+    name = "ingestion-queue"
+  }
+}
+
+resource "aws_sqs_queue" "terraform_queue_deadletter" {
+  name                      = "ingestion-dead-letter-queue"
+  message_retention_seconds = 1209600
+
+  tags = {
+    name = "ingestion-dead-letter-queue"
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_sqs_policy" {
+  name = "lambda-sqs-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = ["sqs:SendMessage"]
+        Effect   = "Allow"
+        Resource = aws_sqs_queue.ingestion_queue.arn
+      }
+    ]
+  })
+}
+
+# Processing Lambda (for SQS)
+data "archive_file" "processing_lambda_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/code-files/processing-lambda"
+  output_path = "${path.module}/code-files/processing_lambda.zip"
+}
+
+resource "aws_lambda_function" "processing_lambda" {
+  function_name = "ai-processor"
+  role          = aws_iam_role.lambda_role.arn # Reusing the same role for now
+  handler       = "index.handler"
+  runtime       = "nodejs18.x"
+
+  filename         = data.archive_file.processing_lambda_zip.output_path
+  source_code_hash = data.archive_file.processing_lambda_zip.output_base64sha256
+
+  timeout = 60 # AI tasks can take longer
+}
+
+resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  event_source_arn = aws_sqs_queue.ingestion_queue.arn
+  function_name    = aws_lambda_function.processing_lambda.arn
+  batch_size       = 1 # Process one inquiry at a time
+
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_sqs_execution" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
 }
