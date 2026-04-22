@@ -7,7 +7,7 @@ This guide walks you through deploying the AI-Powered Customer Inquiry System in
 - Terraform installed (version 1.0 or higher)
 - AWS credentials configured with `terraform` profile
 - SSH key pair at `~/.ssh/tf-key.pub`
-- SES email identity verified in AWS
+- Verify emails after creating infrastructure for SES and SNS
 
 ## Deployment Steps
 
@@ -28,7 +28,7 @@ cat variable.tf
 
 Check or modify default values for:
 - AWS region (default: `us-east-1`)
-- Database credentials (default: `hashir` / `hashir313`)
+- Database credentials (default: `user` / `pass`)
 - Email addresses (SNS and SES endpoints)
 
 ### 3. Plan Deployment
