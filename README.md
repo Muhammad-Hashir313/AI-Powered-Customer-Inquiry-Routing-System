@@ -1,151 +1,140 @@
-# AI-Powered Customer Inquiry Routing System
+# AI-Powered Customer Inquiry System
 
-## Problem Statement
-Customer inquiries are often lost in cluttered inboxes, lack prioritization, and result in slow response times. Manual triaging leads to inefficiency and poor customer experience.
+## What Is This Project?
 
----
+This is a serverless AI-powered customer inquiry management system built on AWS. It collects customer inquiries through a web form, processes them with AI, and automatically notifies both internal departments and customers via email. The entire infrastructure is managed through Terraform, making it reproducible and version-controlled. The system demonstrates event-driven architecture, service decoupling, and secure private networking using VPC endpoints instead of NAT gateways.
 
-## Solution Overview
-This system automates customer inquiry handling using AI and cloud-native architecture. It:
-- Accepts inquiries via a web form
-- Processes and classifies them using AI
-- Prioritizes and routes them to the appropriate team
-- Sends acknowledgment emails
-- Stores all data for tracking, analytics, and dashboard visibility
+## Problem It Solves
 
----
+- **Manual inquiry handling**: Automates customer inquiry collection and response
+- **Slow response times**: AI processes inquiries asynchronously without blocking users
+- **Department coordination**: SNS automatically alerts departments about new inquiries
+- **Email notifications**: Customers receive AI-generated responses automatically via SES
+- **Infrastructure complexity**: Terraform ensures consistent, repeatable infrastructure deployments
 
-## Architecture
+## How The Flow Works
 
-### Flow:
-1. User submits form (hosted on S3 + CloudFront)
-2. API Gateway triggers Ingestion Lambda
-3. Ingestion Lambda:
-   - Validates input
-   - Stores data in RDS (status: `PENDING`)
-   - Pushes message to SQS
-4. SQS triggers Processing Lambda
-5. Processing Lambda:
-   - Updates status → `PROCESSING`
-   - Sends data to Bedrock for AI processing
-   - Receives AI-generated classification, priority, and response
-   - Stores AI output in RDS
-   - Sends email via SES to the relevant team (Sales/Support/Billing)
-   - Sends acknowledgment email to customer
-   - Updates status → `COMPLETED`
-6. Logs and monitoring handled via CloudWatch
+1. **Customer Submits Inquiry**: User fills out a form on the website and submits their question
+2. **Ingestion Lambda**: Receives the request via API Gateway, stores customer data and inquiry in MySQL database
+3. **SQS Queuing**: Inquiry is added to an SQS queue for asynchronous processing (immediate response to user)
+4. **Processing Lambda**: Triggered by SQS message, invokes Claude AI via AWS Bedrock to generate a response
+5. **Department Alert**: System publishes notification to SNS topic (departments receive email alert)
+6. **Customer Response**: AI-generated response is sent to customer via SES email
+7. **Database Update**: Inquiry record is updated with the AI response in MySQL
 
----
+## Services Used
 
-## AWS Services Used
+| Service | Purpose |
+|---------|---------|
+| **Lambda** | Serverless compute for inquiry handling and AI processing |
+| **API Gateway** | HTTP endpoint for receiving customer inquiries |
+| **RDS (MySQL)** | Stores customers and inquiries |
+| **SQS** | Message queue for decoupling ingestion from processing |
+| **SNS** | Internal notifications to departments |
+| **SES** | Email service for customer responses |
+| **Bedrock** | Claude AI model invocation |
+| **S3** | Hosts inquiry form HTML |
+| **CloudFront** | CDN for form distribution |
+| **EC2** | Debug instance for database initialization |
+| **VPC** | Network isolation with subnets and interface endpoints |
+| **VPC Endpoints** | Private connectivity to SQS, SNS, SES, and Bedrock |
 
-- **S3** → Hosts frontend static files  
-- **CloudFront** → CDN for fast delivery  
-- **API Gateway** → Handles incoming API requests  
-- **Lambda** → Serverless compute for ingestion and processing  
-- **SQS** → Message queue for decoupled architecture  
-- **RDS (MySQL)** → Stores customer and inquiry data  
-- **Bedrock** → AI-based classification and response generation  
-- **SES** → Sends emails to customers and internal teams  
-- **CloudWatch** → Logging and monitoring  
+## Network Architecture
 
----
+Lambda functions run in private subnets to access the RDS database securely. They communicate with SQS, SNS, SES, and Bedrock using **VPC Interface Endpoints** instead of traversing the public internet. This approach:
+- Keeps all traffic inside the VPC (no public internet exposure)
+- Uses private DNS names to resolve AWS service endpoints
+- Eliminates the need for NAT Gateways (which are for general outbound internet access)
+- Costs per endpoint per availability zone per hour, plus data processing charges
 
-## Database Design
+The endpoints are created using `for_each` to loop through services: `sqs`, `sns`, `email`, and `bedrock-runtime`. The current implementation uses a single private subnet for cost optimization, though production deployments may benefit from multi-AZ endpoints to improve availability and reduce cross-AZ data transfer latency.
 
-### Customer Table
-- `id (UUID)`
-- `name`
-- `email`
+## Learning & Challenges
 
-### Message Table
-- `id (UUID)`
-- `customerId (FK)`
-- `message`
-- `userCategory`
-- `aiCategory`
-- `priority`
-- `aiResponse`
-- `assignedTeam`
-- `status`
-- `createdAt`
-- `updatedAt`
+### The VPC Connectivity Barrier
 
----
+Lambda functions placed in private subnets for RDS access faced an isolation problem: they couldn't reach external AWS services like SQS, SES, and Bedrock. While the code could access the database, it had no route to reach the AWS service APIs needed for email sending and AI processing.
 
-## Workflow
+### DNS and Route Table Configuration
 
-- User submits inquiry through frontend  
-- Data is validated and stored in database  
-- Message is queued using SQS  
-- Processing Lambda consumes message  
-- AI (Bedrock) determines:
-  - Category
-  - Priority
-  - Response  
-- System:
-  - Stores AI output
-  - Sends email to appropriate team
-  - Sends acknowledgment to customer  
-- Data is persisted for:
-  - Future analytics
-  - Dashboard display
-  - Team-specific views  
+Simply creating VPC Endpoints wasn't enough. Two critical configurations were required:
+- **VPC DNS settings**: `enable_dns_hostnames` and `enable_dns_support` must be enabled on the VPC itself. Without these, the SDKs couldn't resolve private DNS names to endpoints and would attempt to reach services on the public internet.
+- **Route table associations**: Each subnet required explicit association with the private route table for routing rules to apply. This was enforced when setting up VPC Endpoint access.
 
----
+### SQS Visibility Timeout
 
-## Security Implementation
+Lambda's event source mapping from SQS requires careful visibility timeout configuration. The visibility timeout must be ≥ Lambda timeout + buffer for retries. In this project, `processing_lambda` has a 60-second timeout, so SQS visibility was set to 60 seconds. Without this alignment, messages reappear in the queue while Lambda is still processing, causing duplicate processing and error handling complications.
 
-- RDS deployed in private subnet (no public access)  
-- Security Groups restrict DB access to Lambda only  
-- No direct external access to internal services  
-- IAM roles follow **least privilege principle**  
-- Controlled communication between services  
+### VPC Endpoint Design Decision
 
----
+Two approaches exist for VPC Endpoint placement:
+- **Cost Optimization** (current): One endpoint per service in a single private subnet. While AWS routes requests across availability zones, this creates a dependency on a single-AZ endpoint, introducing a point of failure if that AZ experiences an outage.
+- **High Availability**: Deploy endpoints across multiple availability zones. Eliminates single-AZ dependencies and reduces data transfer latency, but increases ENI and hourly costs.
 
-## Challenges & Solutions
+The current architecture prioritizes cost, though production systems should evaluate multi-AZ endpoints to ensure resilience against single-AZ outages.
 
-### Issue: No logs in CloudWatch
-- **Cause:** Missing logging permissions  
-- **Solution:** Attached CloudWatch logging policy to Lambda  
+## Security Model
 
----
+The architecture follows AWS security best practices:
 
-### Issue: Lambda could not connect to RDS
-- **Cause:** Lambda not inside VPC  
-- **Solution:** Attached Lambda to VPC and configured networking  
+- **Private Subnets**: Lambda functions run in private subnets with no direct internet access, preventing unauthorized inbound connections.
+- **VPC Endpoints**: Replace public AWS API access with private, service-specific endpoints that never leave the VPC.
+- **Security Groups**: Endpoints allow HTTPS (port 443) ingress only from Lambda security group; Lambda has egress-only rules to VPC endpoints.
+- **IAM Least Privilege**: Lambda functions assume a role with minimal permissions (SQS, SNS, SES, Bedrock, CloudWatch Logs only).
+- **Database Isolation**: RDS runs in private subnets accessible only from Lambda via security group rules.
+- **No NAT Gateway**: Eliminates an additional network hop and associated security surface.
 
----
+## Architecture Overview
 
-### Issue: Lambda failed to respond to API Gateway
-- **Cause:** No internet access from private subnet  
-- **Solution:** Configured NAT Gateway for outbound access  
+```
+┌─────────────────────── AWS VPC (10.0.0.0/16) ───────────────────────┐
+│                                                                        │
+│  ┌──────────────────────── Private Subnets ──────────────────────┐  │
+│  │                                                                │  │
+│  │  Lambda (Ingestion)  Lambda (Processing)                     │  │
+│  │  [inquiry-handler]   [ai-processor]                          │  │
+│  │        │                    │                                │  │
+│  │        └────────┬───────────┘                                │  │
+│  │                 │                                            │  │
+│  │           VPC Interface Endpoints                           │  │
+│  │   (SQS, SNS, SES, Bedrock-Runtime)                          │  │
+│  │           Private DNS enabled                               │  │
+│  │                 │                                            │  │
+│  │  ┌──────────────────────────────────┐                        │  │
+│  │  │   RDS (MySQL Database)           │                        │  │
+│  │  │   [10.0.2.0/24, 10.0.3.0/24]     │                        │  │
+│  │  └──────────────────────────────────┘                        │  │
+│  │                                                                │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────── Public Subnet ─────────────────────────┐  │
+│  │  Internet Gateway  EC2 Debug Instance  S3 (CloudFront origin) │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 
----
+Flow: Customer → CloudFront → API Gateway → Lambda (Ingestion) → SQS →
+      Lambda (Processing) → Bedrock (AI) → SNS/SES → Email
+```
 
-### Issue: RDS connection failure
-- **Cause:** Security Group misconfiguration  
-- **Solution:** Allowed inbound access from Lambda Security Group  
+## Setup & Deployment
 
----
+See [SETUP.md](./SETUP.md) for complete setup and deployment instructions.
 
-### Issue: SQS messages not visible
-- **Cause:** Messages were immediately consumed by Processing Lambda  
-- **Solution:** Understood event-driven consumption behavior  
+## Project Structure
 
----
-
-## Cost Considerations
-
-- Lambda costs are minimal due to serverless model  
-- SQS is low-cost and efficient for decoupling  
-- RDS is a steady cost component  
-- Bedrock usage contributes to AI processing cost  
-- NAT Gateway introduces additional networking cost  
-
----
-
-## Conclusion
-
-This project demonstrates a scalable, secure, and event-driven system that leverages AI to automate customer inquiry handling. It improves response times, ensures no request is missed, and provides structured data for internal teams and dashboards.
+```
+terraform/
+├── main.tf                  # Infrastructure resources
+├── provider.tf              # AWS provider config
+├── variable.tf              # Input variables
+├── output.tf                # Output values
+├── terraform.tfstate        # Current state
+└── code-files/
+    ├── index.html           # Customer inquiry form
+    ├── index.template.html  # HTML template
+    ├── mysql-server-setup.sh
+    ├── update-api-in-html.sh
+    ├── ingestion-lambda/    # Inquiry handler
+    └── processing-lambda/   # AI processor
+```
