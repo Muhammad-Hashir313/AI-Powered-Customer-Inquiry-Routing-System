@@ -1,7 +1,14 @@
+# Local variables
+locals {
+  vpc_endpoint_services = toset(["sqs", "sns", "email", "bedrock-runtime"])
+}
+
 # VPC
 resource "aws_vpc" "my_vpc" {
-  cidr_block       = "10.0.0.0/16"
-  instance_tenancy = "default"
+  cidr_block           = "10.0.0.0/16"
+  instance_tenancy     = "default"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 }
 
 # Subnets
@@ -29,15 +36,46 @@ resource "aws_internet_gateway" "my-ig" {
   vpc_id = aws_vpc.my_vpc.id
 }
 
-# Elastic IP for NAT Gateway
-resource "aws_eip" "nat-eip" {
-  domain   = "vpc"
+# Security Group for VPC Endpoints
+resource "aws_security_group" "vpc_endpoints_sg" {
+  name        = "vpc-endpoints-sg"
+  description = "Security group for VPC Endpoints"
+  vpc_id      = aws_vpc.my_vpc.id
+
+  ingress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lambda_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "VPC Endpoints Security Group"
+  }
 }
 
-# NAT Gateway
-resource "aws_nat_gateway" "my-ng" {
-  allocation_id = aws_eip.nat-eip.id
-  subnet_id     = aws_subnet.public_subnet.id
+# VPC Endpoints
+resource "aws_vpc_endpoint" "services" {
+  for_each = local.vpc_endpoint_services
+
+  vpc_id              = aws_vpc.my_vpc.id
+  service_name        = "com.amazonaws.us-east-1.${each.value}"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+
+  subnet_ids          = [aws_subnet.private_subnet.id, aws_subnet.private_subnet_2.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints_sg.id]
+
+  tags = {
+    Name = "${each.value}-endpoint"
+  }
 }
 
 # Route Tables
@@ -52,11 +90,6 @@ resource "aws_route_table" "public-rt" {
 
 resource "aws_route_table" "private-rt" {
   vpc_id = aws_vpc.my_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.my-ng.id
-  }
 }
 
 resource "aws_route_table_association" "public-rt-association" {
@@ -367,6 +400,7 @@ resource "aws_sqs_queue" "ingestion_queue" {
   name                      = "ingestion-queue"
   delay_seconds             = 0
   message_retention_seconds = 86400
+  visibility_timeout_seconds = 60
   receive_wait_time_seconds = 10
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.terraform_queue_deadletter.arn
@@ -419,12 +453,18 @@ resource "aws_lambda_function" "processing_lambda" {
   environment {
     variables = {
       SNS_TOPIC_ARN = aws_sns_topic.department_alerts.arn
-      SENDER_EMAIL  = "email@example.com"
+      SENDER_EMAIL  = var.aws_sns_email
     }
   }
 
   filename         = data.archive_file.processing_lambda_zip.output_path
   source_code_hash = data.archive_file.processing_lambda_zip.output_base64sha256
+
+  # Lambda needs to be in the VPC to access VPC endpoints for SNS and Bedrock Runtime
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_subnet.id, aws_subnet.private_subnet_2.id]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
 
   timeout = 60 # AI tasks can take longer
 }
@@ -441,22 +481,20 @@ resource "aws_iam_role_policy_attachment" "lambda_sqs_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
 }
 
-# SNS Topic for Internal Alerts
+# SNS
 resource "aws_sns_topic" "department_alerts" {
   name = "department-inquiry-alerts"
 }
 
-# Add a subscription (Replace with your actual email to test)
 resource "aws_sns_topic_subscription" "admin_email_sub" {
   topic_arn = aws_sns_topic.department_alerts.arn
   protocol  = "email"
-  endpoint  = "email@example.com" 
+  endpoint  = var.aws_sns_email
 }
 
-# SES Email Identity (The email you'll send FROM)
 # Note: You must click the verification link AWS sends to this email!
 resource "aws_ses_email_identity" "sender_email" {
-  email = "email@example.com"
+  email = var.aws_ses_email
 }
 
 resource "aws_iam_role_policy" "processor_permissions" {
@@ -467,19 +505,16 @@ resource "aws_iam_role_policy" "processor_permissions" {
     Version = "2012-10-17"
     Statement = [
       {
-        # Permission for Claude/Bedrock
         Action   = "bedrock:InvokeModel"
         Effect   = "Allow"
         Resource = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
       },
       {
-        # Permission for SNS
         Action   = "sns:Publish"
         Effect   = "Allow"
         Resource = aws_sns_topic.department_alerts.arn
       },
       {
-        # Permission for SES
         Action   = "ses:SendEmail"
         Effect   = "Allow"
         Resource = "*"

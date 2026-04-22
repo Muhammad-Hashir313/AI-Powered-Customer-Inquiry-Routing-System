@@ -23,3 +23,15 @@ variable "aws_db_user" {
     password = "pass"
   }
 }
+
+variable "aws_sns_email" {
+  description = "Email address for SNS notifications"
+  type        = string
+  default     = "email@email.com"
+}
+
+variable "aws_ses_email" {
+  description = "Email address for SES identity"
+  type        = string
+  default     = "email@email.com"
+}
